@@ -688,8 +688,6 @@ Subject: {subject}
 {body}
 """
 
-            print(f"From Header:\n{outgoing}");
-
             # --- send to list members ---
             for recipient in lst.members:
 

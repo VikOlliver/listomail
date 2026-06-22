@@ -4,6 +4,10 @@ examples/**/config.*
 examples/**/secrets.*
 *.password
 *.secret
+seen.txt
+*.seen
+state/
+logs/
 
 # Python junk
 __pycache__/
