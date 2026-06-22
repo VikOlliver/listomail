@@ -1,0 +1,14 @@
+# Secrets / configs
+examples/chat/*.conf
+examples/**/config.*
+examples/**/secrets.*
+*.password
+*.secret
+
+# Python junk
+__pycache__/
+*.pyc
+
+# OS noise
+.DS_Store
+

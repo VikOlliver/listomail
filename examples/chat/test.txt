@@ -1,0 +1,5 @@
+Hello list,
+
+This is a test message from listomail.
+
+- Vik
