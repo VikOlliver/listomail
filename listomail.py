@@ -574,32 +574,28 @@ def cmd_send(listdir, message_file, subject=None):
 
     debug(f"Sending message to {len(lst.members)} recipients")
 
-    failures = 0
-
-    for recipient in lst.members:
-
-        debug(f"Sending to {recipient}")
-
-        msg = f"""From: {lst.address}
+    msg = f"""From: {lst.address}
 To: {lst.address}
 Subject: {subject}
 
 {body}
 """
 
-        try:
-            subprocess.run(
-                ["msmtp", recipient],
-                input=msg.encode("utf-8"),
-                check=True
-            )
-        except subprocess.CalledProcessError as e:
-            print(f"ERROR sending to {recipient}: {e}")
-            failures += 1
+    try:
+        cmd = ["msmtp"] + lst.members
+        subprocess.run(
+            cmd,
+            input = msg.encode("utf-8"),
+            check = True
+        )
 
-    print(f"\nSend complete. Failures: {failures}\n")
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR sending message: {e}")
+        return 1
 
-    return 1 if failures else 0
+    print(f"\nSend complete.\n")
+
+    return 0
 
 def cmd_redistribute(listdir, dry_run=False):
     """
@@ -687,19 +683,17 @@ Subject: {subject}
 
 {body}
 """
-
             # --- send to list members ---
-            for recipient in lst.members:
-
-                if dry_run:
-                    print(f"Would send to {recipient}")
-                else:
-                    print(f"Recipient: {recipient}")
-                    subprocess.run(
-                        ["msmtp", recipient],
-                        input=outgoing.encode("utf-8"),
-                        check=True
-                    )
+            cmd = ["msmtp"] + lst.members
+            if dry_run:
+                print(f"Would send {cmd}")
+            else:
+                print(f"Sending to all list members...")
+                subprocess.run(
+                    cmd,
+                    input=outgoing.encode("utf-8"),
+                    check=True
+                )
 
             print(" Redistributed")
 
