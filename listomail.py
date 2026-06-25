@@ -158,7 +158,9 @@ class ListDirectory:
         self.imap_username = None
         self.imap_password = None
         self.imap_folder = "INBOX"
-        
+        self.state_dir = self.directory / "state"
+        self.seen_file = self.state_dir / "seen.txt"
+                
     def is_member(self, address):
         """
         Purpose:
@@ -181,6 +183,7 @@ class ListDirectory:
         """
         Purpose:
             Loads list.conf into memory.
+            Sets, and if necessary creates, the state file seen.txt
 
         Inputs:
             None
@@ -211,6 +214,11 @@ class ListDirectory:
             "folder",
             "INBOX"
         )
+        # Make sure somewhere exists to save email message states
+        self.state_dir.mkdir(exist_ok=True)
+        if not self.seen_file.exists():
+            self.seen_file.touch()      
+        
         
     def load_members(self):
         """
@@ -233,7 +241,7 @@ class ListDirectory:
             raise ValueError("Missing members.txt")
 
         members = []
-        seen = set()
+        dedupe = set()
 
         for lineno, addr in read_lines(path):
 
@@ -245,13 +253,13 @@ class ListDirectory:
 
             key = addr.lower()
 
-            if key in seen:
+            if key in dedupe:
                 debug(
                     f"Line {lineno}: duplicate '{addr}'"
                 )
                 continue
 
-            seen.add(key)
+            dedupe.add(key)
             members.append(addr)
 
         self.members = members
@@ -262,6 +270,50 @@ class ListDirectory:
         }
         debug(f"Loaded {len(self.member_set)} members")
         
+
+    def load_seen(self):
+        """
+        Purpose:
+            Loads already seen message IDs from the seen.txt file
+
+        Inputs:
+            None
+
+        Returns:
+            None
+
+        Side effects:
+            Updates self.seen_set
+        """
+        self.seen_set = set()
+
+        if self.seen_file.exists():
+            with open(self.seen_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    # Tidy the whitespace and ignore blank lines or comments
+                    # to prevent pollution of the header file.
+                    msgid = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("#"):
+                        continue
+                    if msgid:
+                        self.seen_set.add(msgid)
+
+    # Convenient fast lookup using above message ID list
+    def is_seen(self, message_id):
+        return message_id in self.seen_set
+
+    # And this marks a message as seen (unless we already have, which is Inception Level)
+    def mark_seen(self, message_id):
+        if message_id in self.seen_set:
+            return
+
+        self.seen_set.add(message_id)
+
+        with open(self.seen_file, "a", encoding="utf-8") as f:
+            f.write(message_id + "\n")
+
     def connect_imap(self):
         """
         Purpose:
@@ -343,6 +395,7 @@ class ListDirectory:
 
         self.load_config()
         self.load_members()
+        self.load_seen()
     
 # ----------------------------
 # CHECK COMMAND
@@ -597,7 +650,7 @@ Subject: {subject}
 
     return 0
 
-def cmd_redistribute(listdir, dry_run=False):
+def cmd_redistribute(listdir, dry_run=False, delete=False):
     """
     Purpose:
         Send messages in the list's email inbox to all members
@@ -605,6 +658,7 @@ def cmd_redistribute(listdir, dry_run=False):
     Inputs:
         listdir (Path): list directory
         dry_run:    If True, go through the motions but do not send emails.
+        delete:     If True, delete messages from inbox after successfully completing send
 
     Returns:
         int: exit code
@@ -618,7 +672,7 @@ def cmd_redistribute(listdir, dry_run=False):
         - no state tracking
         - no retries
         - Uses "Sender:" to please the member's mail server
-        - per-recipient delivery for privacy and reliability
+        - recipient list delivery (not BCC) for privacy and reliability
     """
 
     lst = ListDirectory(listdir)
@@ -685,19 +739,44 @@ Subject: {subject}
 """
             # --- send to list members ---
             cmd = ["msmtp"] + lst.members
-            if dry_run:
-                print(f"Would send {cmd}")
-            else:
-                print(f"Sending to all list members...")
-                subprocess.run(
-                    cmd,
-                    input=outgoing.encode("utf-8"),
-                    check=True
+            sent_ok = False
+            try:
+                if dry_run:
+                    print(f"Would send {cmd}")
+                else:
+                    print(f"Sending to all list members...")
+                    subprocess.run(
+                        cmd,
+                        input=outgoing.encode("utf-8"),
+                        check=True,
+                        capture_output=True
+                    )
+                sent_ok = True
+
+            except subprocess.CalledProcessError as e:
+                print(
+                    f"[listomail] SMTP failed "
+                    f"(exit {e.returncode})"
                 )
 
-            print(" Redistributed")
+                if e.stderr:
+                    print(
+                        e.stderr.decode(
+                            "utf-8",
+                            errors="replace"
+                        )
+                    )
+            # --- Check for successful send ---
+            if sent_ok:
+                print(" Redistributed")
+                lst.mark_seen(message_id)
+                if delete:
+                    conn.store(msg_di, "+FLAGS", "\\Deleted")
 
     finally:
+        if delete:
+            print("[listomail] Expunging deleted messages")
+            conn.expunge();
         conn.logout()
 
     return 0
@@ -739,6 +818,11 @@ def main():
         help="Display message body/bodies",
         action="store_true",
         default=None)
+    p_redist.add_argument(
+        "--delete",
+        action="store_true",
+        help="Delete successfully redistributed messages from IMAP"
+    )
     p_redist.add_argument("directory")
 
     args = parser.parse_args()
@@ -762,7 +846,11 @@ def main():
         )
 
     if args.cmd == "redistribute":
-        return cmd_redistribute(Path(args.directory).resolve(), args.dry_run)
+        return cmd_redistribute(
+            Path(args.directory).resolve(),
+            args.dry_run,
+            args.delete
+        )
 
 
     parser.print_help()
