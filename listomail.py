@@ -711,6 +711,11 @@ def cmd_redistribute(listdir, dry_run=False, delete=False):
             subject = msg.get("Subject", "")
             message_id = msg.get("Message-ID", "")
 
+            # If we've seen this one before, don't send it
+            if lst.is_seen(message_id):
+                print(f" Status: SEEN\nRejecting {message_id}")
+                continue
+
             name, sender_addr = parseaddr(from_header)
 
             authorized = lst.is_member(sender_addr)
@@ -771,7 +776,7 @@ Subject: {subject}
                 print(" Redistributed")
                 lst.mark_seen(message_id)
                 if delete:
-                    conn.store(msg_di, "+FLAGS", "\\Deleted")
+                    conn.store(msg_id, "+FLAGS", "\\Deleted")
 
     finally:
         if delete:
