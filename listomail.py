@@ -13,6 +13,7 @@ the Free Software Foundation, either version 3 of the License, or
 """
 
 import argparse
+from datetime import datetime
 import email
 from email.header import decode_header
 from email.utils import parseaddr
@@ -160,6 +161,7 @@ class ListDirectory:
         self.imap_folder = "INBOX"
         self.state_dir = self.directory / "state"
         self.seen_file = self.state_dir / "seen.txt"
+        self.reject_log = self.state_dir / "reject.log"
                 
     def is_member(self, address):
         """
@@ -214,7 +216,7 @@ class ListDirectory:
             "folder",
             "INBOX"
         )
-        # Make sure somewhere exists to save email message states
+        # Make sure somewhere exists to save email message states etc.
         self.state_dir.mkdir(exist_ok=True)
         if not self.seen_file.exists():
             self.seen_file.touch()      
@@ -313,6 +315,18 @@ class ListDirectory:
 
         with open(self.seen_file, "a", encoding="utf-8") as f:
             f.write(message_id + "\n")
+            
+    # Adds message details to the reject log for manual debugging/analysis
+    def log_reject(self, sender, subject, message_id, reason):
+        with open(self.reject_log, "a", encoding="utf-8") as f:
+            f.write(
+                f"{datetime.now().isoformat(timespec='seconds')}\n"
+                f"From: {sender or '(none)'}\n"
+                f"Subject: {subject or '(none)'}\n"
+                f"Message-ID: {message_id or '(none)'}\n"
+                f"Reason: {reason}\n"
+                "\n"
+            )
 
     def connect_imap(self):
         """
@@ -714,6 +728,7 @@ def cmd_redistribute(listdir, dry_run=False, delete=False):
             # If we've seen this one before, don't send it
             if lst.is_seen(message_id):
                 print(f" Status: SEEN\nRejecting {message_id}")
+                lst.log_reject(from_header, subject, message_id, "Message already seen")
                 continue
 
             name, sender_addr = parseaddr(from_header)
@@ -726,6 +741,7 @@ def cmd_redistribute(listdir, dry_run=False, delete=False):
 
             if not authorized:
                 print(" Status: REJECT")
+                lst.log_reject(from_header, subject, message_id, "Unauthorised sender")
                 continue
 
             print(" Status: AUTHORIZED")
