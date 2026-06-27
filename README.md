@@ -1,6 +1,6 @@
 # Listomail
 
-A minimal IMAP-based mailing list processor written in Python and desparation. It utilises and existing email account accessed by msmtp and fetchmail.
+A minimal IMAP-based mailing list processor written in Python and desperation. It utilises an existing email account accessed by msmtp and fetchmail.
 
 Listomail fetches incoming email from an IMAP inbox, applies simple policy rules (membership and duplicate detection), and redistributes messages to a mailing list via SMTP using BCC-style delivery.
 
