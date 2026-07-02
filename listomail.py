@@ -153,12 +153,14 @@ class ListDirectory:
 
         self.address = None
         self.members = []
+        self.list_name = None
         self.config = None
         self.imap_server = None
         self.imap_port = None
         self.imap_username = None
         self.imap_password = None
         self.imap_folder = "INBOX"
+        self.smtp_batch_size = None
         self.state_dir = self.directory / "state"
         self.seen_file = self.state_dir / "seen.txt"
         self.reject_log = self.state_dir / "reject.log"
@@ -216,6 +218,19 @@ class ListDirectory:
             "folder",
             "INBOX"
         )
+
+        # Cleanly default the batch size to everything
+        try:
+            self.smtp_batch_size = config["list"].getint("smtp_batch_size", fallback=0)
+            
+        except ValueError:
+            print("Invalid smtp_batch_size in list.conf")
+            sys.exit(1)
+            
+        self.list_name = config["list"].get("list_name")
+        if not self.list_name:
+            raise ValueError("Missing required setting: [list] list_name")
+    
         # Make sure somewhere exists to save email message states etc.
         self.state_dir.mkdir(exist_ok=True)
         if not self.seen_file.exists():
@@ -563,43 +578,6 @@ def cmd_fetch(listdir, body_flag):
 # RUN COMMAND (SKELETON)
 # ----------------------------
 
-def cmd_run(listdir):
-    """
-    Purpose:
-        Execute one processing cycle for a list (stub version).
-
-    Inputs:
-        listdir (Path): list directory
-
-    Returns:
-        int: exit code
-
-    Notes:
-        Phase 1 stub only:
-        - no IMAP
-        - no SMTP
-        - no state tracking
-    """
-
-    debug(f"Running list: {listdir}")
-
-    lst = ListDirectory(listdir)
-    lst.load()
-
-    print("\n=== Listomail Run (stub) ===\n")
-    print(f"List: {lst.address}")
-    print(f"Members: {len(lst.members)}\n")
-
-    debug("Step 1: would connect to IMAP (not implemented)")
-    debug("Step 2: would fetch unseen messages")
-    debug("Step 3: would validate sender")
-    debug("Step 4: would distribute via SMTP")
-    debug("Step 5: would update state.db")
-
-    print("\nRun complete (stub).\n")
-    return 0
-
-
 def cmd_send(listdir, message_file, subject=None):
     """
     Purpose:
@@ -668,6 +646,8 @@ def cmd_redistribute(listdir, dry_run=False, delete=False):
     """
     Purpose:
         Send messages in the list's email inbox to all members
+        Some fiddling of From: field needed because these days
+        that needs to be the same as the sending account.
 
     Inputs:
         listdir (Path): list directory
@@ -749,50 +729,94 @@ def cmd_redistribute(listdir, dry_run=False, delete=False):
             # --- body extraction ---
             body = get_text_body(msg)
 
-            # --- build outgoing message ---
-            outgoing = f"""From: {from_header}
+            # --- build outgoing message with a compliant sender name ---
+            if name:
+                from_display = f"{name} via {lst.list_name}"
+            else:
+                from_display = f"{sender_addr} via {lst.list_name}"
+
+            outgoing = f"""From: {from_display} <{lst.address}>
 Sender: {lst.address}
 To: {lst.address}
 Reply-To: {lst.address}
 Subject: {subject}
+List-Id: {lst.list_name} <{lst.address.replace("@", "-")}>
+List-Post: <mailto:{lst.address}>
+Precedence: list
+X-Original-From: {from_header}
 
 {body}
 """
             # --- send to list members ---
             cmd = ["msmtp"] + lst.members
-            sent_ok = False
-            try:
-                if dry_run:
-                    print(f"Would send {cmd}")
-                else:
-                    print(f"Sending to all list members...")
-                    subprocess.run(
-                        cmd,
-                        input=outgoing.encode("utf-8"),
-                        check=True,
-                        capture_output=True
-                    )
-                sent_ok = True
+            sent_ok = True
 
-            except subprocess.CalledProcessError as e:
-                print(
-                    f"[listomail] SMTP failed "
-                    f"(exit {e.returncode})"
-                )
 
-                if e.stderr:
-                    print(
-                        e.stderr.decode(
-                            "utf-8",
-                            errors="replace"
+# Messages are only marked as seen if all SMTP batches succeed.
+# A later batch failure may result in duplicate delivery to earlier
+# recipients on retry. This is a deliberate trade-off to avoid
+# maintaining per-recipient delivery state.
+
+            # Create sublists of a sizer that won't annoy the mailservers
+            # Batch size of zero just sends the whole list in one stransaction
+            if lst.smtp_batch_size == 0:
+                batch_size = len(lst.members)
+            else:
+                batch_size = lst.smtp_batch_size
+        
+
+            for i in range(0, len(lst.members), batch_size):
+
+                recipients = lst.members[i:i + batch_size]
+                cmd = ["msmtp"] + recipients
+                
+                try:
+                    if dry_run:
+                        print(f"Would send to: {', '.join(recipients)}")
+                    else:
+                        print(
+                            f"Sending batch "
+                            f"{i // batch_size + 1} "
+                            f"({len(recipients)} recipients)..."
                         )
+
+                        subprocess.run(
+                            cmd,
+                            input=outgoing.encode("utf-8"),
+                            check=True,
+                            capture_output=True
+                        )
+
+                except subprocess.CalledProcessError as e:
+                    sent_ok = False
+
+                    print(
+                        f"[listomail] SMTP failed "
+                        f"(exit {e.returncode})"
                     )
+
+                    if e.stderr:
+                        print(
+                            e.stderr.decode(
+                                "utf-8",
+                                errors="replace"
+                            )
+                        )
+
+                    break
+                    
             # --- Check for successful send ---
             if sent_ok:
                 print(" Redistributed")
-                lst.mark_seen(message_id)
+                if dry_run:
+                    print("Would have marked as 'seen'.")
+                else:
+                    lst.mark_seen(message_id)
                 if delete:
-                    conn.store(msg_id, "+FLAGS", "\\Deleted")
+                    if dry_run:
+                        print("Would have deleted message.")
+                    else:
+                        conn.store(msg_id, "+FLAGS", "\\Deleted")
 
     finally:
         if delete:
@@ -826,9 +850,6 @@ def main():
         help="Display message body/bodies"
     )
     
-    p_run = sub.add_parser("run")
-    p_run.add_argument("directory", nargs="?", default=".")
-
     p_send = sub.add_parser("send")
     p_send.add_argument("directory")
     p_send.add_argument("message_file")
@@ -856,9 +877,6 @@ def main():
             Path(args.directory).resolve(),
             args.body
         )
-    if args.cmd == "run":
-        return cmd_run(Path(args.directory).resolve())
-
     if args.cmd == "send":
         return cmd_send(
             Path(args.directory).resolve(),
