@@ -13,16 +13,17 @@ the Free Software Foundation, either version 3 of the License, or
 """
 
 import argparse
+import configparser
 from datetime import datetime
 import email
 from email.header import decode_header
 from email.utils import parseaddr
 import imaplib
-import re
-import sys
-import configparser
-import subprocess
 from pathlib import Path
+import re
+import subprocess
+import sys
+import time
 
 
 EMAIL_RE = re.compile(
@@ -162,6 +163,7 @@ class ListDirectory:
         self.imap_folder = "INBOX"
         self.smtp_batch_size = None
         self.msmtp_account = None
+        self.smtp_rate_limit = 0
         self.state_dir = self.directory / "state"
         self.seen_file = self.state_dir / "seen.txt"
         self.reject_log = self.state_dir / "reject.log"
@@ -231,6 +233,14 @@ class ListDirectory:
         self.list_name = config["list"].get("list_name")
         if not self.list_name:
             raise ValueError("Missing required setting: [list] list_name")
+
+        # If no SMTP rate limit (msgs per hour) is set, use zero to indicate no limit
+        try:
+            self.smtp_rate_limit = config["list"].getint("smtp_rate_limit", fallback=0)
+
+        except ValueError:
+            print("Invalid smtp_rate_limit in list.conf")
+            sys.exit(1)
 
         # If there is a specific msmtp account specified, use that
         self.msmtp_account = config["list"].get("msmtp_account", "").strip()
@@ -767,7 +777,6 @@ X-Original-From: {from_header}
             cmd.extend(lst.members)
             sent_ok = True
 
-
 # Messages are only marked as seen if all SMTP batches succeed.
 # A later batch failure may result in duplicate delivery to earlier
 # recipients on retry. This is a deliberate trade-off to avoid
@@ -780,6 +789,12 @@ X-Original-From: {from_header}
             else:
                 batch_size = lst.smtp_batch_size
         
+            # Use this delay between batches. Note: if batch size exceeds
+            # rate limit of msgs per hr, this will not rate limit. So use batches.
+            if lst.smtp_rate_limit > 0:
+                rate_limit_delay = 3600 * lst.smtp_batch_size / lst.smtp_rate_limit
+            else:
+                rate_limit_delay = 0
 
             for i in range(0, len(lst.members), batch_size):
 
@@ -788,7 +803,7 @@ X-Original-From: {from_header}
                 
                 try:
                     if dry_run:
-                        print(f"Would send to: {', '.join(recipients)}")
+                        print(f"Would send to: {', '.join(recipients)} with {rate_limit_delay} rate limiting delay.")
                     else:
                         print(
                             f"Sending batch "
@@ -802,6 +817,10 @@ X-Original-From: {from_header}
                             check=True,
                             capture_output=True
                         )
+                        # Having sent it, we need to limit the send rate by waiting
+                        if rate_limit_delay > 0:
+                            print(f"Delaying for {rate_limit_delay} seconds to limit send rate")
+                            time.sleep(rate_limit_delay)
 
                 except subprocess.CalledProcessError as e:
                     sent_ok = False
