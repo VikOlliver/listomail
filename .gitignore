@@ -1,5 +1,4 @@
 # Secrets / configs
-examples/chat/*.conf
 examples/**/config.*
 examples/**/secrets.*
 *.password

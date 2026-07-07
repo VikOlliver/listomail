@@ -2,7 +2,7 @@
 """
 listomail - simple modular mailing list manager
 
-Phase: 1 (check + run skeleton)
+Phase: 2 Support multiple mail server accounts
 
 Copyright (C) 2026 Vik Olliver <vik@diamondage.co.nz>
 
@@ -37,7 +37,7 @@ VERSION = "0.2"
 def debug(msg):
     """
     Purpose:
-        Simple debug output helper (Phase 1).
+        Simple debug output helper (Phase 2).
 
     Inputs:
         msg (str): message to print
@@ -161,6 +161,7 @@ class ListDirectory:
         self.imap_password = None
         self.imap_folder = "INBOX"
         self.smtp_batch_size = None
+        self.msmtp_account = None
         self.state_dir = self.directory / "state"
         self.seen_file = self.state_dir / "seen.txt"
         self.reject_log = self.state_dir / "reject.log"
@@ -230,6 +231,14 @@ class ListDirectory:
         self.list_name = config["list"].get("list_name")
         if not self.list_name:
             raise ValueError("Missing required setting: [list] list_name")
+
+        # If there is a specific msmtp account specified, use that
+        self.msmtp_account = config["list"].get("msmtp_account", "").strip()
+        if self.msmtp_account:
+            print(f"Using account '{self.msmtp_account}' to send mail via msmtp")
+        else:
+            print("Using default msmpt account to send mail via msmtp")
+            
     
         # Make sure somewhere exists to save email message states etc.
         self.state_dir.mkdir(exist_ok=True)
@@ -627,7 +636,11 @@ Subject: {subject}
 """
 
     try:
-        cmd = ["msmtp"] + lst.members
+        # Send to list members. Use specific msmtp accoutn if specified.
+        cmd = ["msmtp"]
+        if lst.msmtp_account:
+            cmd.append("--account=" + lst.msmtp_account)
+        cmd.extend(lst.members)
         subprocess.run(
             cmd,
             input = msg.encode("utf-8"),
@@ -747,8 +760,11 @@ X-Original-From: {from_header}
 
 {body}
 """
-            # --- send to list members ---
-            cmd = ["msmtp"] + lst.members
+            # Send to list members. Use specific msmtp accoutn if specified.
+            cmd = ["msmtp"]
+            if lst.msmtp_account:
+                cmd.append("--account=" + lst.msmtp_account)
+            cmd.extend(lst.members)
             sent_ok = True
 
 
@@ -758,7 +774,7 @@ X-Original-From: {from_header}
 # maintaining per-recipient delivery state.
 
             # Create sublists of a sizer that won't annoy the mailservers
-            # Batch size of zero just sends the whole list in one stransaction
+            # Batch size of zero just sends the whole list in one transaction
             if lst.smtp_batch_size == 0:
                 batch_size = len(lst.members)
             else:
