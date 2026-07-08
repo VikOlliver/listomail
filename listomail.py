@@ -820,7 +820,14 @@ X-Original-From: {from_header}
                         # Having sent it, we need to limit the send rate by waiting
                         if rate_limit_delay > 0:
                             print(f"Delaying for {rate_limit_delay} seconds to limit send rate")
-                            time.sleep(rate_limit_delay)
+                            # We want to tickle the IMAP every 60 seconds so that the connection doesn't fail
+                            interval = 60
+                            remaining_time = rate_limit_delay
+                            while remaining_time > 0:
+                                sleep_time = min(interval, remaining_time)
+                                time.sleep(sleep_time)
+                                conn.noop()
+                                remaining_time -= sleep_time
 
                 except subprocess.CalledProcessError as e:
                     sent_ok = False
