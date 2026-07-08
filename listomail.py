@@ -12,6 +12,14 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
+# TODO
+#
+# Connect and disconnect IMAP connection between reading msg and deleting it
+# rather than just tickling the IMAP every 60 secoinds.
+#
+# Read the message body in its entirity and broadcast attachmnets et al
+# rather than just stripping the body text out and sending that.
+
 import argparse
 import configparser
 from datetime import datetime
@@ -796,6 +804,12 @@ X-Original-From: {from_header}
             else:
                 rate_limit_delay = 0
 
+            # Calculate the batch size so user can see how far there is left to go
+            if batch_size > 0:
+                num_batches = (len(lst.members) + batch_size -1) // batch_size
+            else:
+                num_batches = 1
+
             for i in range(0, len(lst.members), batch_size):
 
                 recipients = lst.members[i:i + batch_size]
@@ -807,7 +821,7 @@ X-Original-From: {from_header}
                     else:
                         print(
                             f"Sending batch "
-                            f"{i // batch_size + 1} "
+                            f"{i // batch_size + 1} of {num_batches} "
                             f"({len(recipients)} recipients)..."
                         )
 
@@ -826,7 +840,11 @@ X-Original-From: {from_header}
                             while remaining_time > 0:
                                 sleep_time = min(interval, remaining_time)
                                 time.sleep(sleep_time)
-                                conn.noop()
+                                try:
+                                    conn.noop()
+                                except Exception:
+                                    print("[listomail] IMAP connection lost during rate-limit delay")
+                                    raise
                                 remaining_time -= sleep_time
 
                 except subprocess.CalledProcessError as e:
