@@ -17,9 +17,6 @@ the Free Software Foundation, either version 3 of the License, or
 # Connect and disconnect IMAP connection between reading msg and deleting it
 # rather than just tickling the IMAP every 50 secoinds.
 #
-# Read the message body in its entirity and broadcast attachmnets et al
-# rather than just stripping the body text out and sending that.
-#
 # Trap autoreplies and similar bounces. Use headers, not text interpretation
 
 import argparse
@@ -39,7 +36,7 @@ import time
 EMAIL_RE = re.compile(
     r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
 )
-VERSION = "0.3"
+VERSION = "0.4"
 
 # ----------------------------
 # Utility functions
@@ -105,7 +102,9 @@ def valid_email(addr):
 def get_text_body(msg):
     """
     Purpose:
-        Extract the payloads from a RFC822 message
+        Extract the payloads from a RFC822 message. 
+        ONLY for use in cmd_fetch when doing an administrative check for pending messages
+        DO NOT use for cmd_redistribute.
 
     Inputs:
         msg: 
@@ -454,6 +453,13 @@ class ListDirectory:
         self.load_config()
         self.load_members()
         self.load_seen()
+
+# Helper to set a message header if it exists, and create it if it doesn't
+def set_header(msg, key, value):
+    if key in msg:
+        msg.replace_header(key, value)
+    else:
+        msg[key] = value
     
 # ----------------------------
 # CHECK COMMAND
@@ -768,20 +774,29 @@ def cmd_redistribute(listdir, dry_run=False, delete=False):
                 from_display = f"{name} via {lst.list_name}"
             else:
                 from_display = f"{sender_addr} via {lst.list_name}"
+            
+            # Replace a bunch of headers to make it look like it came from this list
+            set_header(msg,
+                "From",
+                f"{from_display} <{lst.address}>"
+            )
 
-            outgoing = f"""From: {from_display} <{lst.address}>
-Sender: {lst.address}
-To: {lst.address}
-Reply-To: {lst.address}
-Subject: {subject}
-List-Id: {lst.list_name} <{lst.address.replace("@", "-")}>
-List-Post: <mailto:{lst.address}>
-Precedence: list
-X-Original-From: {from_header}
+            set_header(msg, "Reply-To", lst.address)
+            set_header(msg, "Sender", lst.address)
+            set_header(msg, "To", lst.address)
 
-{body}
-"""
-            # Send to list members. Use specific msmtp accoutn if specified.
+            set_header(msg, "List-Id",
+                f"{lst.list_name} "
+                f"<{lst.address.replace('@','-')}>"
+            )
+            set_header(msg, "List-Post", f"<mailto:{lst.address}>")
+            set_header(msg, "Precedence", "list")
+            set_header(msg, "X-Original-From", from_header)
+
+            # Turn message headers, the original body, attachments and all into a single block
+            outgoing = msg.as_bytes()
+            
+            # Send to list members. Use specific msmtp account if specified.
             cmd = ["msmtp"]
             if lst.msmtp_account:
                 cmd.append("--account=" + lst.msmtp_account)
@@ -830,7 +845,7 @@ X-Original-From: {from_header}
 
                         subprocess.run(
                             cmd,
-                            input=outgoing.encode("utf-8"),
+                            input=outgoing,
                             check=True,
                             capture_output=True
                         )
