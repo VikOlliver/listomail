@@ -15,10 +15,12 @@ the Free Software Foundation, either version 3 of the License, or
 # TODO
 #
 # Connect and disconnect IMAP connection between reading msg and deleting it
-# rather than just tickling the IMAP every 60 secoinds.
+# rather than just tickling the IMAP every 50 secoinds.
 #
 # Read the message body in its entirity and broadcast attachmnets et al
 # rather than just stripping the body text out and sending that.
+#
+# Trap autoreplies and similar bounces. Use headers, not text interpretation
 
 import argparse
 import configparser
@@ -37,7 +39,7 @@ import time
 EMAIL_RE = re.compile(
     r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
 )
-VERSION = "0.2"
+VERSION = "0.3"
 
 # ----------------------------
 # Utility functions
@@ -715,8 +717,9 @@ def cmd_redistribute(listdir, dry_run=False, delete=False):
             return 1
 
         msg_ids = data[0].split()
+        messages_sent = 0
 
-        print(f"[listomail] Messages found: {len(msg_ids)}")
+        print(f"[listomail V{VERSION}] Messages found: {len(msg_ids)}")
 
         for msg_id in msg_ids:
 
@@ -834,8 +837,8 @@ X-Original-From: {from_header}
                         # Having sent it, we need to limit the send rate by waiting
                         if rate_limit_delay > 0:
                             print(f"Delaying for {rate_limit_delay} seconds to limit send rate")
-                            # We want to tickle the IMAP every 60 seconds so that the connection doesn't fail
-                            interval = 60
+                            # We want to tickle the IMAP every 50 seconds so that the connection doesn't fail
+                            interval = 50
                             remaining_time = rate_limit_delay
                             while remaining_time > 0:
                                 sleep_time = min(interval, remaining_time)
@@ -851,7 +854,7 @@ X-Original-From: {from_header}
                     sent_ok = False
 
                     print(
-                        f"[listomail] SMTP failed "
+                        f"[listomail V{VERSION}] SMTP failed "
                         f"(exit {e.returncode})"
                     )
 
@@ -868,6 +871,7 @@ X-Original-From: {from_header}
             # --- Check for successful send ---
             if sent_ok:
                 print(" Redistributed")
+                messages_sent += 1
                 if dry_run:
                     print("Would have marked as 'seen'.")
                 else:
@@ -879,8 +883,8 @@ X-Original-From: {from_header}
                         conn.store(msg_id, "+FLAGS", "\\Deleted")
 
     finally:
-        if delete:
-            print("[listomail] Expunging deleted messages")
+        if delete and (messages_sent > 0):
+            print(f"[listomail V{VERSION}] Expunging deleted messages")
             conn.expunge();
         conn.logout()
 
