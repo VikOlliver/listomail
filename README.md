@@ -21,9 +21,6 @@ It is designed to be:
 - SMTP broadcast via SMTP envelope fan-out (atomic send)
 - Basic reject logging
 - Optional message deletion after successful processing
-
-## Features (Imminent)
-
 - Gmail-compatible multipart email support (basic text extraction)
 
 ---
@@ -49,7 +46,7 @@ Each email is processed through a simple pipeline:
 2. Extract headers (From, Subject, Message-ID)
 3. Skip if already seen
 4. Reject if sender is not a member
-5. Extract message body (plain text preferred)
+5. Rewrite headers so it appears to come from listomail's email account.
 6. Send to list via single SMTP call
 7. Mark Message-ID as seen
 8. Optionally delete from IMAP
@@ -66,18 +63,6 @@ Each email is processed through a simple pipeline:
   - configuration (list.conf)
   - membership (members.txt)
   - runtime state (state/)
-
----
-
-## MIME handling
-
-Listomail currently supports basic multipart email:
-
-- Prefers text/plain
-- Falls back to raw payload if necessary
-- HTML and attachments are ignored at this stage
-
-Future versions may extend this to full MIME preservation.
 
 ---
 
@@ -110,8 +95,6 @@ Each entry includes:
 
 ## Known limitations
 
-- No attachment forwarding
-- No HTML rendering
 - No bounce parsing beyond basic detection
 - No retry queue or persistent error handling system
 
@@ -119,7 +102,6 @@ Each entry includes:
 
 ## Future work (roadmap)
 
-- Better MIME/attachment handling
 - Bounce parsing (DSN extraction)
 - Structured logging
 - Optional moderation mode
